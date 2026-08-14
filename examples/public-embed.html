@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OneNav 前台接口示例</title>
+    <style>
+      body { font-family: "Segoe UI", "PingFang SC", sans-serif; margin: 24px; background: #f5f7fb; color: #111827; }
+      h1 { margin-bottom: 8px; }
+      .muted { color: #64748b; margin-bottom: 24px; }
+      .cat { margin-bottom: 24px; }
+      .cat h2 { font-size: 18px; margin: 0 0 12px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+      a.card {
+        display: block; padding: 12px 14px; background: #fff; border-radius: 10px;
+        text-decoration: none; color: inherit; border: 1px solid #e5e7eb;
+      }
+      a.card:hover { box-shadow: 0 8px 20px rgba(0,0,0,.06); }
+      .desc { font-size: 12px; color: #64748b; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    </style>
+  </head>
+  <body>
+    <h1 id="title">OneNav</h1>
+    <p class="muted" id="subtitle">通过 /api/public/nav 拉取列表</p>
+    <div id="app">加载中...</div>
+
+    <script>
+      // 若部署在同域，保持默认；跨域请改成你的服务地址，例如 http://127.0.0.1:8080
+      const API_BASE = '';
+
+      async function main() {
+        const res = await fetch(`${API_BASE}/api/public/nav`, {
+          // 如需展示私有数据，带上登录后的 token：
+          // headers: { Authorization: 'Bearer ' + localStorage.getItem('onenav_token') }
+          credentials: 'include',
+        });
+        const json = await res.json();
+        if (json.code !== 0) {
+          document.getElementById('app').textContent = json.message || '加载失败';
+          return;
+        }
+        const { settings, nav } = json.data;
+        document.getElementById('title').textContent = settings.site_title || 'OneNav';
+        document.getElementById('subtitle').textContent = settings.site_subtitle || '';
+
+        const root = document.getElementById('app');
+        root.innerHTML = '';
+        (nav || []).forEach((cat) => root.appendChild(renderCategory(cat)));
+      }
+
+      function renderCategory(cat) {
+        const section = document.createElement('section');
+        section.className = 'cat';
+        const h2 = document.createElement('h2');
+        h2.textContent = `${cat.icon ? cat.icon + ' ' : ''}${cat.name}`;
+        section.appendChild(h2);
+        const grid = document.createElement('div');
+        grid.className = 'grid';
+        (cat.links || []).forEach((link) => {
+          const a = document.createElement('a');
+          a.className = 'card';
+          a.href = link.url;
+          a.target = '_blank';
+          a.rel = 'noreferrer';
+          a.innerHTML = `<div><strong>${escapeHtml(link.name)}</strong></div><div class="desc">${escapeHtml(link.description || link.url)}</div>`;
+          grid.appendChild(a);
+        });
+        section.appendChild(grid);
+        (cat.children || []).forEach((child) => section.appendChild(renderCategory(child)));
+        return section;
+      }
+
+      function escapeHtml(s) {
+        return String(s)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;');
+      }
+
+      main().catch((e) => {
+        document.getElementById('app').textContent = e.message || '请求失败';
+      });
+    </script>
+  </body>
+</html>

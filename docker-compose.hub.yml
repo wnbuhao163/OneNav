@@ -1,0 +1,29 @@
+# 直接拉取 Docker Hub 镜像（无需本机构建）
+# 用法：
+#   set DOCKERHUB_USERNAME=wnbuhao
+#   docker compose -f docker-compose.hub.yml up -d
+#
+# 或一行：
+#   DOCKERHUB_USERNAME=wnbuhao docker compose -f docker-compose.hub.yml up -d
+
+services:
+  onenav:
+    image: ${DOCKERHUB_USERNAME:?请设置 DOCKERHUB_USERNAME}/onenav:${ONENAV_TAG:-latest}
+    container_name: onenav
+    ports:
+      - "${ONENAV_HOST_PORT:-8080}:8080"
+    environment:
+      ONENAV_PORT: "8080"
+      ONENAV_DATA: /data
+      ONENAV_STATIC: /app/static
+      TZ: Asia/Shanghai
+      ONENAV_DOCKER_PUBLIC_HOST: ${ONENAV_DOCKER_PUBLIC_HOST:-}
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+frontend/node_modules/
+
+# build
+frontend/dist/
+backend/onenav
+backend/onenav.exe
+
+# data
+data/
+*.db
+
+# env / ide
+.env
+.DS_Store
+.vscode/
+.idea/
+
+# logs
+*.log
+npm-debug.log*

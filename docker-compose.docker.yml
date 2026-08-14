@@ -1,0 +1,14 @@
+# 叠加启用 Docker 容器扫描/导入（会挂载 docker.sock）
+#
+# 用法：
+#   set ONENAV_DOCKER_PUBLIC_HOST=192.168.1.10
+#   docker compose -f docker-compose.yml -f docker-compose.docker.yml up -d --build
+
+services:
+  onenav:
+    environment:
+      ONENAV_DOCKER_HOST: unix:///var/run/docker.sock
+      ONENAV_DOCKER_PUBLIC_HOST: ${ONENAV_DOCKER_PUBLIC_HOST:-}
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock

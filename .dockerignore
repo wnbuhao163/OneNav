@@ -1,0 +1,12 @@
+node_modules
+frontend/node_modules
+frontend/dist
+backend/data
+data
+*.db
+.git
+.DS_Store
+*.log
+.env
+.vscode
+.idea

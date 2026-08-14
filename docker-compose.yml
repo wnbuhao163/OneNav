@@ -1,0 +1,47 @@
+# OneNav — 单容器部署
+#
+# 启动：  docker compose up -d --build
+# 访问：  http://localhost:8080
+# 数据：  ./data
+#
+# 需要「Docker 容器导入」时：
+#   docker compose -f docker-compose.yml -f docker-compose.docker.yml up -d --build
+
+services:
+  onenav:
+    build:
+      context: .
+      args:
+        VERSION: ${ONENAV_VERSION:-1.0.0}
+    image: onenav:${ONENAV_TAG:-latest}
+    container_name: onenav
+    ports:
+      # 宿主机端口冲突时可改：8088:8080 或设环境变量 ONENAV_HOST_PORT=8088
+      - "${ONENAV_HOST_PORT:-8080}:8080"
+    environment:
+      ONENAV_PORT: "8080"
+      ONENAV_DATA: /data
+      ONENAV_STATIC: /app/static
+      TZ: Asia/Shanghai
+
+      # 可选：自定义 JWT（不设则自动写入 /data/.jwt_secret）
+      # ONENAV_JWT_SECRET: "请换成至少16位随机串"
+
+      # HTTPS 反代时建议开启
+      # ONENAV_COOKIE_SECURE: "1"
+
+      # 跨域白名单（逗号分隔）；前后端同域可留空
+      # ONENAV_CORS_ORIGINS: "https://nav.example.com"
+
+      # Docker 导入时由 docker-compose.docker.yml 注入；也可在此手写：
+      # ONENAV_DOCKER_HOST: unix:///var/run/docker.sock
+      ONENAV_DOCKER_PUBLIC_HOST: ${ONENAV_DOCKER_PUBLIC_HOST:-}
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
