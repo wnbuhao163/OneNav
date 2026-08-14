@@ -389,15 +389,11 @@ export default function LinksPage() {
             dataIndex: 'url',
             ellipsis: true,
             render: (v) => (
-              <Typography.Link
-                href={v}
-                target="_blank"
-                rel="noreferrer"
-                ellipsis={{ tooltip: v }}
-                style={{ maxWidth: '100%' }}
-              >
-                {v}
-              </Typography.Link>
+              <Typography.Text ellipsis={{ tooltip: v }} style={{ maxWidth: '100%' }}>
+                <Typography.Link href={v} target="_blank" rel="noreferrer">
+                  {v}
+                </Typography.Link>
+              </Typography.Text>
             ),
           },
           {
