@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   Button,
+  Checkbox,
   Col,
   ColorPicker,
   Form,
   Input,
   Modal,
   Row,
+  Select,
   Slider,
   Space,
+  Tabs,
   Tag,
   Upload,
   message,
@@ -22,16 +25,26 @@ import {
   LockOutlined,
   QuestionCircleOutlined,
   ReloadOutlined,
+  RobotOutlined,
+  SettingOutlined,
+  StopOutlined,
   UploadOutlined,
 } from '@ant-design/icons'
 import {
   applyTheme,
   deleteHtmlTheme,
+  generateThemeWithAIStream,
   getSettings,
+  getThemeAIConfig,
   getThemeGuide,
   getThemes,
+  testThemeAIConfig,
   updateSettings,
+  updateThemeAIConfig,
   uploadHtmlTheme,
+  type ThemeAIChatMessage,
+  type ThemeAIGeneratedTheme,
+  type ThemeAIValidation,
 } from '../../api'
 import ThemeGuideView, { buildGuideCopyAll, parseThemeGuide } from '../../components/ThemeGuideView'
 import { buildThemeVars, defaultAppearance, type AppearanceSettings } from '../../theme/appearance'
@@ -76,6 +89,13 @@ function isSystemTheme(key?: string) {
   return !key || key === 'system' || ['glass', 'default', 'dark', 'card'].includes(key)
 }
 
+const AI_QUICK_PROMPTS = [
+  '做一个深色玻璃拟态导航，大图标卡片，页脚要有管理入口',
+  '极简浅色主题，左侧分类、右侧链接网格，留白多一点',
+  '科技感深蓝渐变背景，顶栏搜索 + 分类标签切换',
+  '请输出完整可运行的 index.html（含 applyAppearance）',
+]
+
 export default function ThemesPage() {
   const siteTitle = useDisplaySiteTitle()
   const [loading, setLoading] = useState(true)
@@ -93,6 +113,24 @@ export default function ThemesPage() {
   const [guideTitle, setGuideTitle] = useState('HTML 主题开发说明')
   const [guideMarkdown, setGuideMarkdown] = useState('')
   const [guideLoading, setGuideLoading] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiTab, setAiTab] = useState('chat')
+  const [aiBase, setAiBase] = useState('')
+  const [aiKey, setAiKey] = useState('')
+  const [aiModel, setAiModel] = useState('')
+  const [aiKeySet, setAiKeySet] = useState(false)
+  const [aiConfigSaving, setAiConfigSaving] = useState(false)
+  const [aiChat, setAiChat] = useState<ThemeAIChatMessage[]>([])
+  const [aiInput, setAiInput] = useState('')
+  const [aiThemeName, setAiThemeName] = useState('')
+  const [aiBaseThemeKey, setAiBaseThemeKey] = useState<string | undefined>()
+  const [aiOverwrite, setAiOverwrite] = useState(false)
+  const [aiGenerating, setAiGenerating] = useState(false)
+  const [aiTesting, setAiTesting] = useState(false)
+  const [aiLastTheme, setAiLastTheme] = useState<ThemeAIGeneratedTheme | null>(null)
+  const [aiLastValidation, setAiLastValidation] = useState<ThemeAIValidation | null>(null)
+  const aiAbortRef = useRef<AbortController | null>(null)
+  const aiChatEndRef = useRef<HTMLDivElement | null>(null)
   const [iframeTick, setIframeTick] = useState(0)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const [form] = Form.useForm<AppearanceSettings>()
@@ -315,6 +353,195 @@ export default function ThemesPage() {
     setUploadOpen(true)
   }
 
+  const openAIModal = async () => {
+    setAiOpen(true)
+    setAiKey('')
+    try {
+      const res = await getThemeAIConfig()
+      setAiBase(res.data.ai_api_base || '')
+      setAiModel(res.data.ai_model || '')
+      setAiKeySet(!!res.data.ai_api_key_set)
+      setAiTab(res.data.ai_api_base && res.data.ai_model && res.data.ai_api_key_set ? 'chat' : 'config')
+    } catch (e) {
+      message.error((e as Error).message)
+      setAiTab('config')
+    }
+  }
+
+  const saveAIConfig = async () => {
+    const base = aiBase.trim()
+    const model = aiModel.trim()
+    if (!base || !model) {
+      message.warning('请填写 API Base URL 与模型名')
+      return
+    }
+    if (!aiKey.trim() && !aiKeySet) {
+      message.warning('请填写 API Key')
+      return
+    }
+    setAiConfigSaving(true)
+    try {
+      const res = await updateThemeAIConfig({
+        ai_api_base: base,
+        ai_model: model,
+        ai_api_key: aiKey.trim() || undefined,
+      })
+      setAiBase(res.data.ai_api_base || base)
+      setAiModel(res.data.ai_model || model)
+      setAiKeySet(!!res.data.ai_api_key_set)
+      setAiKey('')
+      message.success('AI 配置已保存')
+      setAiTab('chat')
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setAiConfigSaving(false)
+    }
+  }
+
+  const testAIConfig = async () => {
+    setAiTesting(true)
+    try {
+      const res = await testThemeAIConfig({
+        ai_api_base: aiBase.trim() || undefined,
+        ai_model: aiModel.trim() || undefined,
+        ai_api_key: aiKey.trim() || undefined,
+      })
+      message.success(res.data.hint || '连通成功')
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setAiTesting(false)
+    }
+  }
+
+  const cancelAIChat = () => {
+    aiAbortRef.current?.abort()
+    aiAbortRef.current = null
+    setAiGenerating(false)
+  }
+
+  const sendAIChat = async (preset?: string) => {
+    const text = (preset ?? aiInput).trim()
+    if (!text) {
+      message.warning('请描述你想要的主题')
+      return
+    }
+    if (!aiBase.trim() || !aiModel.trim() || !aiKeySet) {
+      message.warning('请先完成 AI 接口配置')
+      setAiTab('config')
+      return
+    }
+    if (aiOverwrite && !aiBaseThemeKey) {
+      message.warning('覆盖保存需要先选择要微调的主题')
+      return
+    }
+
+    const history = aiChat.slice(-8)
+    if (!preset) setAiInput('')
+    setAiChat((prev) => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '' }])
+    setAiGenerating(true)
+    setAiLastTheme(null)
+    setAiLastValidation(null)
+
+    const controller = new AbortController()
+    aiAbortRef.current = controller
+
+    try {
+      const done = await generateThemeWithAIStream(
+        {
+          message: text,
+          history,
+          name: aiThemeName.trim() || undefined,
+          base_theme_key: aiBaseThemeKey,
+          overwrite: aiOverwrite,
+        },
+        {
+          signal: controller.signal,
+          onDelta: (chunk) => {
+            setAiChat((prev) => {
+              if (!prev.length) return prev
+              const next = [...prev]
+              const last = next[next.length - 1]
+              if (last?.role !== 'assistant') return prev
+              next[next.length - 1] = { role: 'assistant', content: last.content + chunk }
+              return next
+            })
+            requestAnimationFrame(() => aiChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }))
+          },
+        },
+      )
+
+      setAiChat((prev) => {
+        if (!prev.length) return prev
+        const next = [...prev]
+        const last = next[next.length - 1]
+        if (last?.role === 'assistant') {
+          next[next.length - 1] = { role: 'assistant', content: done.reply || last.content }
+        }
+        return next
+      })
+
+      if (done.validation) setAiLastValidation(done.validation)
+      if (done.theme?.key) {
+        setAiLastTheme(done.theme)
+        message.success(done.hint || `已生成主题：${done.theme.name}`)
+        await load()
+        if (done.theme.overwritten) {
+          setAiBaseThemeKey(done.theme.key)
+        }
+      } else if (done.hint) {
+        message.info(done.hint)
+      }
+      requestAnimationFrame(() => aiChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }))
+    } catch (e) {
+      const err = e as Error
+      if (err.name === 'AbortError' || /abort|取消/i.test(err.message)) {
+        message.info('已取消生成')
+        setAiChat((prev) => {
+          if (!prev.length) return prev
+          const next = [...prev]
+          const last = next[next.length - 1]
+          if (last?.role === 'assistant' && !last.content.trim()) {
+            next[next.length - 1] = { role: 'assistant', content: '（已取消）' }
+          }
+          return next
+        })
+      } else {
+        message.error(err.message)
+        setAiChat((prev) => {
+          if (!prev.length) return [...prev, { role: 'assistant', content: `调用失败：${err.message}` }]
+          const next = [...prev]
+          const last = next[next.length - 1]
+          if (last?.role === 'assistant') {
+            next[next.length - 1] = {
+              role: 'assistant',
+              content: last.content.trim() ? `${last.content}\n\n调用失败：${err.message}` : `调用失败：${err.message}`,
+            }
+          } else {
+            next.push({ role: 'assistant', content: `调用失败：${err.message}` })
+          }
+          return next
+        })
+      }
+    } finally {
+      aiAbortRef.current = null
+      setAiGenerating(false)
+    }
+  }
+
+  const applyAIGeneratedTheme = async (theme: ThemeAIGeneratedTheme) => {
+    try {
+      const res: any = await applyTheme(theme.key)
+      setCurrent(res.data.theme || theme.key)
+      setFrontendUrl(res.data.frontend_url || theme.preview_url || '/')
+      message.success(`已启用「${theme.name}」`)
+      await load()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+
   const submitUpload = async () => {
     if (!uploadFile) {
       message.warning('请选择 index.html 或 ZIP 主题包')
@@ -366,6 +593,9 @@ export default function ThemesPage() {
           </Button>
           <Button icon={<QuestionCircleOutlined />} onClick={() => void openGuide()} style={{ borderRadius: 6 }}>
             AI 要求文档
+          </Button>
+          <Button icon={<RobotOutlined />} onClick={() => void openAIModal()} style={{ borderRadius: 6 }}>
+            AI 生成主题
           </Button>
           <Button type="primary" icon={<UploadOutlined />} onClick={openUploadModal} style={{ borderRadius: 6 }}>
             上传主题
@@ -785,6 +1015,240 @@ export default function ThemesPage() {
             <p className="ant-upload-hint">单文件 index.html，或完整 ZIP 主题包</p>
           </Upload.Dragger>
         </div>
+      </Modal>
+
+      <Modal
+        className="theme-ai-modal admin-modal"
+        title={
+          <div>
+            <div>AI 生成主题</div>
+            <div className="admin-modal-subtitle">
+              OpenAI 兼容接口 · 流式生成 · 支持基于现有主题微调
+            </div>
+          </div>
+        }
+        open={aiOpen}
+        onCancel={() => {
+          if (aiGenerating) cancelAIChat()
+          if (!aiConfigSaving) setAiOpen(false)
+        }}
+        width={760}
+        centered
+        destroyOnClose={false}
+        footer={null}
+        styles={{
+          body: {
+            maxHeight: 'calc(100vh - 200px)',
+            overflow: 'hidden',
+            paddingTop: 4,
+            paddingBottom: 8,
+          },
+        }}
+      >
+        <Tabs
+          activeKey={aiTab}
+          onChange={setAiTab}
+          items={[
+            {
+              key: 'config',
+              label: (
+                <span>
+                  <SettingOutlined /> 接口配置
+                </span>
+              ),
+              children: (
+                <div className="theme-ai-config theme-upload-form admin-form">
+                  <label>
+                    API Base URL <em>*</em>
+                  </label>
+                  <Input
+                    value={aiBase}
+                    placeholder="例如 https://api.openai.com/v1 或 https://api.deepseek.com/v1"
+                    onChange={(e) => setAiBase(e.target.value)}
+                  />
+                  <label>
+                    API Key <em>*</em>
+                  </label>
+                  <Input.Password
+                    value={aiKey}
+                    placeholder={aiKeySet ? '已保存，留空表示不修改' : 'sk-... 或供应商提供的 Key'}
+                    onChange={(e) => setAiKey(e.target.value)}
+                    autoComplete="off"
+                  />
+                  <label>
+                    模型名 <em>*</em>
+                  </label>
+                  <Input
+                    value={aiModel}
+                    placeholder="例如 gpt-4o-mini / deepseek-v4-flash / qwen-plus"
+                    onChange={(e) => setAiModel(e.target.value)}
+                  />
+                  <p className="theme-ai-hint">
+                    服务端代发请求，兼容 OpenAI <code>/v1/chat/completions</code>。Key
+                    仅保存在本机数据库。可先点「测试连通」再保存。
+                  </p>
+                  <Space wrap>
+                    <Button loading={aiTesting} onClick={() => void testAIConfig()} style={{ borderRadius: 6 }}>
+                      测试连通
+                    </Button>
+                    <Button
+                      type="primary"
+                      loading={aiConfigSaving}
+                      onClick={() => void saveAIConfig()}
+                      style={{ borderRadius: 6 }}
+                    >
+                      保存配置
+                    </Button>
+                  </Space>
+                </div>
+              ),
+            },
+            {
+              key: 'chat',
+              label: (
+                <span>
+                  <RobotOutlined /> 对话生成
+                </span>
+              ),
+              children: (
+                <div className="theme-ai-chat">
+                  <div className="theme-ai-meta">
+                    <div className="theme-ai-meta-row">
+                      <label>主题名称（可选）</label>
+                      <Input
+                        value={aiThemeName}
+                        placeholder="留空自动命名"
+                        maxLength={64}
+                        onChange={(e) => setAiThemeName(e.target.value)}
+                      />
+                    </div>
+                    <div className="theme-ai-meta-row">
+                      <label>基于已有主题微调（可选）</label>
+                      <Select
+                        allowClear
+                        placeholder="从零生成则不选"
+                        value={aiBaseThemeKey}
+                        onChange={(v) => {
+                          setAiBaseThemeKey(v)
+                          if (!v) setAiOverwrite(false)
+                        }}
+                        options={custom.map((t) => ({ value: t.key, label: t.name }))}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                    <Checkbox
+                      checked={aiOverwrite}
+                      disabled={!aiBaseThemeKey}
+                      onChange={(e) => setAiOverwrite(e.target.checked)}
+                    >
+                      覆盖所选主题（否则另存为新主题）
+                    </Checkbox>
+                  </div>
+
+                  <div className="theme-ai-prompts">
+                    {AI_QUICK_PROMPTS.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        className="theme-ai-prompt-chip"
+                        disabled={aiGenerating}
+                        onClick={() => void sendAIChat(p)}
+                      >
+                        {p.length > 28 ? `${p.slice(0, 28)}…` : p}
+                      </button>
+                    ))}
+                  </div>
+
+                  {aiLastTheme && (
+                    <div className="theme-ai-result">
+                      <div className="theme-ai-result-title">
+                        已保存：{aiLastTheme.name}
+                        {aiLastValidation && !aiLastValidation.ok && (
+                          <Tag color="warning" style={{ marginLeft: 8 }}>
+                            校验有缺项
+                          </Tag>
+                        )}
+                        {aiLastValidation?.ok && (
+                          <Tag color="success" style={{ marginLeft: 8 }}>
+                            校验通过
+                          </Tag>
+                        )}
+                      </div>
+                      {aiLastValidation?.issues?.length ? (
+                        <div className="theme-ai-result-issues">
+                          {aiLastValidation.issues.map((i) => (
+                            <span key={i}>{i}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <Space wrap size={8}>
+                        <Button
+                          size="small"
+                          icon={<EyeOutlined />}
+                          onClick={() => openFrontend(aiLastTheme.preview_url)}
+                          style={{ borderRadius: 6 }}
+                        >
+                          预览
+                        </Button>
+                        <Button
+                          size="small"
+                          type="primary"
+                          onClick={() => void applyAIGeneratedTheme(aiLastTheme)}
+                          style={{ borderRadius: 6 }}
+                        >
+                          一键启用
+                        </Button>
+                      </Space>
+                    </div>
+                  )}
+
+                  <div className="theme-ai-messages">
+                    {aiChat.length === 0 && (
+                      <div className="theme-ai-empty">
+                        描述风格即可开始。支持流式输出；可选基于已有主题微调。生成完整 HTML
+                        后会自动保存，并可预览/启用。
+                      </div>
+                    )}
+                    {aiChat.map((m, i) => (
+                      <div key={i} className={`theme-ai-bubble is-${m.role}`}>
+                        <div className="theme-ai-bubble-role">
+                          {m.role === 'user' ? '你' : 'AI'}
+                          {aiGenerating && i === aiChat.length - 1 && m.role === 'assistant' ? ' · 生成中' : ''}
+                        </div>
+                        <pre>{m.content || (aiGenerating ? '…' : '')}</pre>
+                      </div>
+                    ))}
+                    <div ref={aiChatEndRef} />
+                  </div>
+                  <div className="theme-ai-composer">
+                    <Input.TextArea
+                      value={aiInput}
+                      rows={3}
+                      placeholder="例如：做一个深色玻璃拟态导航，大图标，页脚要有管理入口"
+                      disabled={aiGenerating}
+                      onChange={(e) => setAiInput(e.target.value)}
+                      onPressEnter={(e) => {
+                        if (!e.shiftKey) {
+                          e.preventDefault()
+                          void sendAIChat()
+                        }
+                      }}
+                    />
+                    {aiGenerating ? (
+                      <Button danger icon={<StopOutlined />} onClick={cancelAIChat} style={{ borderRadius: 6 }}>
+                        取消
+                      </Button>
+                    ) : (
+                      <Button type="primary" onClick={() => void sendAIChat()} style={{ borderRadius: 6 }}>
+                        发送
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ),
+            },
+          ]}
+        />
       </Modal>
 
       <Modal

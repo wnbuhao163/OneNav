@@ -80,6 +80,151 @@ export const uploadHtmlTheme = (file: File, meta?: { name?: string; description?
 }
 export const deleteHtmlTheme = (key: string) => api.delete(`/admin/themes/${encodeURIComponent(key)}`)
 
+export type ThemeAIConfig = {
+  ai_api_base: string
+  ai_model: string
+  ai_api_key_set: boolean
+}
+
+export const getThemeAIConfig = () =>
+  api.get('/admin/themes/ai/config') as Promise<{ data: ThemeAIConfig }>
+
+export const updateThemeAIConfig = (data: {
+  ai_api_base: string
+  ai_api_key?: string
+  ai_model: string
+}) => api.put('/admin/themes/ai/config', data) as Promise<{ data: ThemeAIConfig }>
+
+export const testThemeAIConfig = (data?: {
+  ai_api_base?: string
+  ai_api_key?: string
+  ai_model?: string
+}) =>
+  api.post('/admin/themes/ai/test', data || {}, { timeout: 35000 }) as Promise<{
+    data: { ok: boolean; reply?: string; hint?: string }
+  }>
+
+export type ThemeAIChatMessage = { role: 'user' | 'assistant'; content: string }
+
+export type ThemeAIGeneratedTheme = {
+  key: string
+  name: string
+  preview_url: string
+  fs_key: string
+  type: string
+  overwritten?: boolean
+}
+
+export type ThemeAIValidation = {
+  ok: boolean
+  passed: string[]
+  issues: string[]
+}
+
+export type ThemeAIStreamDone = {
+  type: 'done'
+  reply: string
+  hint?: string
+  theme?: ThemeAIGeneratedTheme | null
+  validation?: ThemeAIValidation | null
+}
+
+export async function generateThemeWithAIStream(
+  data: {
+    message: string
+    history?: ThemeAIChatMessage[]
+    name?: string
+    base_theme_key?: string
+    overwrite?: boolean
+  },
+  handlers: {
+    onDelta?: (chunk: string) => void
+    onDone?: (payload: ThemeAIStreamDone) => void
+    signal?: AbortSignal
+  } = {},
+): Promise<ThemeAIStreamDone> {
+  const token = localStorage.getItem('onenav_token')
+  const res = await fetch('/api/admin/themes/ai/generate/stream', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(data),
+    signal: handlers.signal,
+  })
+
+  if (!res.ok) {
+    let msg = '生成失败'
+    try {
+      const body = await res.json()
+      msg = body?.message || msg
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg)
+  }
+  if (!res.body) {
+    throw new Error('浏览器不支持流式响应')
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let assembled = ''
+  let donePayload: ThemeAIStreamDone | null = null
+
+  const consumeEvent = (raw: string) => {
+    const lines = raw.split('\n')
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('data:')) continue
+      const payload = trimmed.slice(5).trim()
+      if (!payload) continue
+      let evt: any
+      try {
+        evt = JSON.parse(payload)
+      } catch {
+        continue
+      }
+      if (evt.type === 'delta' && typeof evt.content === 'string') {
+        assembled += evt.content
+        handlers.onDelta?.(evt.content)
+      } else if (evt.type === 'error') {
+        throw new Error(evt.message || '生成失败')
+      } else if (evt.type === 'done') {
+        donePayload = {
+          type: 'done',
+          reply: evt.reply || assembled,
+          hint: evt.hint,
+          theme: evt.theme ?? null,
+          validation: evt.validation ?? null,
+        }
+        handlers.onDone?.(donePayload)
+      }
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop() || ''
+    for (const part of parts) {
+      if (part.trim()) consumeEvent(part)
+    }
+  }
+  if (buffer.trim()) consumeEvent(buffer)
+
+  if (!donePayload) {
+    if (!assembled.trim()) throw new Error('AI 未返回内容')
+    donePayload = { type: 'done', reply: assembled, theme: null, validation: null }
+  }
+  return donePayload
+}
+
 export const exportBackup = async () => {
   const token = localStorage.getItem('onenav_token')
   const res = await fetch('/api/admin/backup/export', {

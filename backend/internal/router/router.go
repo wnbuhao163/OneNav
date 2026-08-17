@@ -126,6 +126,11 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 				themes.POST("/apply", h.ApplyTheme)
 				themes.POST("/upload", h.UploadHtmlTheme)
 				themes.DELETE("/:key", h.DeleteHtmlTheme)
+				themes.GET("/ai/config", h.GetAIConfig)
+				themes.PUT("/ai/config", h.UpdateAIConfig)
+				themes.POST("/ai/test", h.TestAIConfig)
+				themes.POST("/ai/generate", h.GenerateThemeWithAI)
+				themes.POST("/ai/generate/stream", h.GenerateThemeWithAIStream)
 			}
 
 			backup := admin.Group("/backup")

@@ -63,6 +63,10 @@ type Setting struct {
 	GlassBlur       int       `gorm:"default:22" json:"glass_blur"`              // px
 	GlassSaturate   int       `gorm:"default:160" json:"glass_saturate"`         // %
 	HeaderOpacity   int       `gorm:"default:70" json:"header_opacity"`          // 0-100
+	// AI 主题生成（OpenAI 兼容）；Key 仅后台使用，公开接口不返回
+	AiApiBase       string    `gorm:"size:512" json:"ai_api_base"`
+	AiApiKey        string    `gorm:"size:512" json:"ai_api_key"`
+	AiModel         string    `gorm:"size:128" json:"ai_model"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }

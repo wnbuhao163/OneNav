@@ -1,25 +1,35 @@
-# 直接拉取 Docker Hub 镜像（无需本机构建）
-# 用法：
-#   set DOCKERHUB_USERNAME=wnbuhao
-#   docker compose -f docker-compose.hub.yml up -d
+# OneNav — NAS / Docker Hub 部署（含 Docker 容器导入）
+# 用法：docker compose -f docker-compose.hub.yml up -d
+# 访问：http://NAS的IP:9999
 #
-# 或一行：
-#   DOCKERHUB_USERNAME=wnbuhao docker compose -f docker-compose.hub.yml up -d
+# 说明：
+# 1. 必须挂载 docker.sock，并设置 ONENAV_DOCKER_HOST
+# 2. ONENAV_DOCKER_PUBLIC_HOST 改成你 NAS 的局域网 IP（或域名）
+# 3. 若提示无权访问 docker.sock，取消下面 user: "0:0" 的注释
 
 services:
   onenav:
-    image: ${DOCKERHUB_USERNAME:?请设置 DOCKERHUB_USERNAME}/onenav:${ONENAV_TAG:-latest}
+    image: mystring/onenav:latest
     container_name: onenav
+    # 非 root 用户可能读不了 docker.sock；导入功能报权限错误时打开下一行
+    # user: "0:0"
     ports:
-      - "${ONENAV_HOST_PORT:-8080}:8080"
+      - "9999:8080"
     environment:
       ONENAV_PORT: "8080"
       ONENAV_DATA: /data
       ONENAV_STATIC: /app/static
       TZ: Asia/Shanghai
-      ONENAV_DOCKER_PUBLIC_HOST: ${ONENAV_DOCKER_PUBLIC_HOST:-}
+      # —— Docker 容器导入（必填）——
+      ONENAV_DOCKER_HOST: unix:///var/run/docker.sock
+      # 改成你的 NAS 局域网 IP，例如 192.168.1.10
+      ONENAV_DOCKER_PUBLIC_HOST: ${ONENAV_DOCKER_PUBLIC_HOST:-192.168.1.10}
+      # 可选
+      # ONENAV_JWT_SECRET: "请换成至少16位随机串"
+      # ONENAV_COOKIE_SECURE: "1"
     volumes:
       - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]

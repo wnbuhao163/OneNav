@@ -211,6 +211,8 @@ func (h *Handler) GetSettings(c *gin.Context) {
 	if wasLegacy {
 		_ = h.DB.Save(&s).Error
 	}
+	// 管理端设置页不回传 AI Key 明文
+	s.AiApiKey = ""
 	response.OK(c, s)
 }
 
